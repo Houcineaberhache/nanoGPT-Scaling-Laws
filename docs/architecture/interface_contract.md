@@ -29,7 +29,7 @@ Both `GPT` and `BigramLanguageModel` implement identical public signatures, allo
   - `logits`: `torch.FloatTensor` of shape `(B, T, vocab_size)` representing unnormalized log-probabilities over the vocabulary.
   - `loss`: Scalar `torch.FloatTensor` cross-entropy loss if `targets` is provided; `None` if `targets is None`.
 - **Constraint**:
-  - If $T > \text{block\_size}$, raises `ValueError` (or assertion error) enforcing sequence length bounds.
+  - If $T > \text{block\_size}$, raises `AssertionError` (specifically: `f"Cannot forward sequence of length {T}, block_size is {self.config.block_size}"`).
 
 ### 2.2 `generate(idx, max_new_tokens, temperature=1.0, top_k=None) -> LongTensor`
 - **Arguments**:
@@ -44,8 +44,9 @@ Both `GPT` and `BigramLanguageModel` implement identical public signatures, allo
 - **Returns**:
   - `torch.LongTensor` of shape `(B, T + max_new_tokens)` containing prompt tokens concatenated with generated tokens.
 
-### 2.3 `get_num_params() -> int`
-- Returns total number of trainable parameters. Tied weights (`lm_head.weight = wte.weight`) are counted exactly once.
+### 2.3 `get_num_params(non_embedding: bool = False) -> int`
+- Returns total number of unique trainable parameters. Deduplicates tied weights (`lm_head.weight is wte.weight`) via memory data pointer tracking (`data_ptr()`) so they are counted only once.
+- If `non_embedding=True` on `GPT`, subtracts learned positional embeddings (`self.wpe.weight.numel()`). For `BigramLanguageModel`, `non_embedding` is accepted for API parity and ignored.
 
 ### 2.4 Baseline Model Specific: `BigramLanguageModel.from_counts`
 - **Signature**: `BigramLanguageModel.from_counts(train_ids, vocab_size, alpha=1.0, block_size=256) -> BigramLanguageModel`
@@ -55,7 +56,7 @@ Both `GPT` and `BigramLanguageModel` implement identical public signatures, allo
   - `alpha`: Float additive Laplace smoothing parameter (default: 1.0).
   - `block_size`: Sequence context limit (default: 256).
 - **Behavior**:
-  - Computes transition count matrix $C(i, j)$, adds $\alpha$, normalizes rows to probabilities, and populates `lookup.weight` with $\log P(j \mid i)$.
+  - Computes transition count matrix $C(i, j)$, adds $\alpha$, normalizes rows to probabilities (posterior mean under a uniform Dirichlet prior for $\alpha=1.0$), and populates `token_embedding_table.weight` with $\log P(j \mid i)$.
 
 ---
 
@@ -80,10 +81,11 @@ config = GPTConfig.from_yaml(path="configs/small.yaml", vocab_size=vocab_size)
 model = GPT(config)
 ```
 `GPTConfig.from_yaml` enforces strict validation:
-1. **Missing Keys**: Raises `ValueError` if any required key (`block_size`, `n_layer`, `n_head`, `n_embd`, `dropout`, `bias`) is missing.
-2. **Conflicting Vocabulary**: Raises `ValueError` if the YAML file already contains a `vocab_size` key that contradicts or hardcodes the parameter.
-3. **Unknown Keys**: Raises `ValueError` if unknown keys (e.g. typos like `n_layers`) are encountered.
-4. **Dimension Divisibility**: Raises `ValueError` if `n_embd % n_head != 0`.
+1. **Valid Dictionary**: Raises `ValueError` if the YAML configuration root is not a dictionary.
+2. **Unknown Keys**: Raises `ValueError` if any unknown key is encountered outside the allowed set (`block_size`, `n_layer`, `n_head`, `n_embd`, `dropout`, `bias`, `vocab_size`).
+3. **Missing Keys**: Raises `KeyError` if any required key (`block_size`, `n_layer`, `n_head`, `n_embd`) is missing. (`dropout` and `bias` are optional in YAML and default to `0.0` and `False` respectively, matching the `GPTConfig` dataclass defaults).
+4. **Conflicting Vocabulary**: If `vocab_size` is present in the YAML file and is not `None`, it is accepted if it matches `vocab_size`, but raises `ValueError` if it contradicts the injected `vocab_size` (`data["vocab_size"] != vocab_size`).
+5. **Dimension Divisibility**: Raises `ValueError` if `n_embd % n_head != 0`.
 
 ---
 
