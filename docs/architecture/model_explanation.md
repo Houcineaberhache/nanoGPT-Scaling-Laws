@@ -20,8 +20,8 @@ As **Student 2 (Model Engineer)**, my mandate was to design, implement, test, an
 - `src/models/__init__.py`: Clean package exports (`GPT`, `GPTConfig`, `BigramLanguageModel`).
 - `configs/small.yaml`: Hyperparameter specification for Small model (4 layers, 128 embedding dim).
 - `configs/medium.yaml`: Hyperparameter specification for Medium model (6 layers, 256 embedding dim).
-- `tests/test_model.py`: 11 unit tests covering forward shapes, causal masking, generation, weight tying, parameter budget, and serialization.
-- `tests/test_baseline.py`: 4 unit tests covering baseline forward/loss, parameter counts, generation, and count estimation.
+- `tests/test_model.py`: 11 unit tests covering forward shapes and loss, context length assertions, causal masking, generation behavior, eval determinism vs train dropout, weight tying and parameter formula, bias option, YAML validation, parameter budget constraint (< 10M), state_dict serialization roundtrip, and backward pass gradient flow.
+- `tests/test_baseline.py`: 4 unit tests covering baseline interface parity, parameter count, analytic Laplace smoothing transition probabilities, and empirical loss reduction.
 - `docs/architecture/interface_contract.md`: Binding interface contract for Students 3 and 4.
 - `docs/architecture/model_explanation.md`: This architecture and oral defense reference.
 
@@ -255,17 +255,17 @@ The Maximum Likelihood Estimator (MLE) with additive **Laplace smoothing** ($\al
 $$P(c_j \mid c_i) = \frac{C(c_i, c_j) + \alpha}{\sum_{k=1}^V (C(c_i, c_k) + \alpha)} = \frac{C(c_i, c_j) + \alpha}{N_i + \alpha \cdot V}$$
 where $C(c_i, c_j)$ is the frequency of bigram $(c_i, c_j)$, $N_i = \sum_k C(c_i, c_k)$ is the count of character $c_i$, and $V = 65$.
 - Stored as log-probabilities in a $(65 \times 65)$ lookup table ($4,225$ parameters).
-- **Optimality**: Laplace smoothing is the optimal Bayes estimator under a symmetric Dirichlet prior over transition distributions. It prevents $-\infty$ log-probabilities (infinite perplexity) for bigrams unseen during training.
+- **Optimality**: Laplace smoothing corresponds to the posterior mean under a uniform Dirichlet prior over transition distributions ($\alpha = 1.0$). It prevents $-\infty$ log-probabilities (infinite perplexity) for bigrams unseen during training.
 
 ### 5.2 Verified Empirical Results (from `PROGRESS.md`)
 Evaluated across the exact Shakespeare splits (with $V = 65$):
-- **Training Set** (905,183 character pairs):
+- **Training Set** (892,314 character pairs):
   - Loss: **2.4515** nats
   - Perplexity ($\text{PPL} = e^{\text{loss}}$): **11.61**
-- **Validation Set** (113,147 character pairs):
+- **Validation Set** (111,538 character pairs):
   - With $\alpha = 1.0$: Loss = **2.4958** nats, $\text{PPL} = \mathbf{12.13}$
   - With $\alpha = 0.01$: Loss = **2.4969** nats, $\text{PPL} = \mathbf{12.14}$
-- **Test Set** (113,149 character pairs):
+- **Test Set** (111,539 character pairs):
   - With $\alpha = 1.0$: Loss = **2.5034** nats, $\text{PPL} = \mathbf{12.22}$
 
 *Why $\alpha=1.0$ is superior to $\alpha=0.01$*: The vocabulary includes rare characters (e.g., uppercase letters, certain punctuation marks). A very small $\alpha=0.01$ assigns excessively small probabilities to rare valid transitions in the validation set, slightly penalizing validation cross-entropy.
@@ -283,28 +283,28 @@ Our test suite in `tests/test_model.py` and `tests/test_baseline.py` contains 15
 
 ### 6.1 Test Coverage Overview
 - **`tests/test_model.py` (11 tests)**:
-  1. `test_forward_shapes`: Verifies logits shape `(B, T, V)`, scalar cross-entropy loss when targets are present, and `loss is None` when targets are absent.
-  2. `test_sequence_length_assertion`: Confirms passing $T > \text{block\_size}$ raises `ValueError`.
-  3. `test_causality_invariance`: Proves that modifying token $T$ does not alter logits at tokens $1 \dots T-1$.
-  4. `test_generate_shapes_and_context_crop`: Confirms autoregressive generation preserves batch dimension, concatenates tokens correctly, and handles prompts longer than `block_size`.
-  5. `test_generate_top_k_strict_membership`: Draws 200 consecutive stochastic samples from a fixed prompt and mathematically asserts every sampled token belongs to the top-$k$ set of next-token logits.
-  6. `test_eval_determinism_vs_train_dropout`: Proves that two forwards in `eval()` mode are bitwise identical, whereas in `train()` mode dropout creates stochastic variations.
-  7. `test_weight_tying_and_param_counting`: Verifies `model.lm_head.weight is model.wte.weight` and checks `get_num_params()` against our hand formula.
-  8. `test_bias_true_runs`: Validates that `GPTConfig(bias=True)` constructs and executes cleanly without dimension mismatches.
-  9. `test_from_yaml_loader_and_validation`: Tests loading real YAML configs, dynamic `vocab_size` injection, and validates exceptions for missing keys, unknown keys, conflicting `vocab_size`, and non-divisible head dimensions.
-  10. `test_parameter_budget_under_10m`: Asserts both `configs/small.yaml` and `configs/medium.yaml` have $< 10,000,000$ parameters.
-  11. `test_state_dict_save_and_load`: Confirms complete serialization roundtrip fidelity via `torch.save` and `load_state_dict`.
+  1. `test_forward_shapes_and_loss`: Asserts forward pass produces logits of shape `(B, T, vocab_size)`, a finite scalar cross-entropy loss when targets are provided, and `loss is None` when targets are omitted.
+  2. `test_context_length_assertion`: Asserts that passing a sequence with $T > \text{block\_size}$ (e.g., 33 > 32) raises an `AssertionError` matching `"block_size"`.
+  3. `test_causality_masking`: Asserts that perturbing the final token at $T-1$ results in bitwise identical earlier logits at tokens $0 \dots T-2$ (`diff_prefix == 0.0`), while altering the logits at position $T-1$.
+  4. `test_generate_behavior`: Asserts generation output shapes with and without `top_k`, context cropping beyond `block_size`, strict membership of 200 stochastic samples within top-$k$ next-token logit indices, and preservation of `model.training` mode.
+  5. `test_eval_determinism_vs_train_dropout`: Asserts that forward passes with `dropout=0.2` are strictly deterministic in `eval()` mode (`torch.equal`) and stochastic across runs in `train()` mode.
+  6. `test_weight_tying_and_param_formula`: Asserts `lm_head.weight` is identical to `wte.weight` in memory and confirms `model.get_num_params()` exactly matches the analytical parameter formula $(V + T + 1)C + L(2C + 12C^2)$.
+  7. `test_bias_option`: Asserts that configuring `bias=True` builds successfully, outputs expected logit shapes, computes finite loss, and populates non-None parameter gradients during backpropagation.
+  8. `test_from_yaml_validation`: Asserts `GPTConfig.from_yaml` loads real Small and Medium configs, and strictly raises `KeyError` for missing keys, and `ValueError` for conflicting `vocab_size`, unknown keys, or `n_embd` not divisible by `n_head`.
+  9. `test_parameter_budget_constraint`: Asserts that both Small (828,672 params) and Medium (4,804,096 params) models strictly satisfy the $< 10,000,000$ parameter budget constraint and match exact expected counts.
+  10. `test_state_dict_roundtrip`: Asserts serialization fidelity by saving and loading `state_dict` via `torch.save` and `load_state_dict`, asserting bitwise identical logits on a test tensor.
+  11. `test_backward_pass_gradients`: Asserts that `loss.backward()` populates valid, non-None, non-NaN gradients across every trainable parameter in the network.
 - **`tests/test_baseline.py` (4 tests)**:
-  1. `test_baseline_forward_and_untrained_loss`: Checks output shapes and verifies untrained random weights produce loss close to $\ln(65) \approx 4.1744$.
-  2. `test_baseline_param_count`: Validates parameter count equals $V^2 = 4,225$.
-  3. `test_baseline_generate_contract`: Confirms identical `generate` contract and context cropping compatibility.
-  4. `test_from_counts_estimation`: Tests empirical frequency matrix estimation and Laplace smoothing with synthetic known transitions.
+  1. `test_baseline_interface_parity`: Asserts `BigramLanguageModel` adheres to the identical interface contract as GPT: logits shape `(B, T, V)`, finite scalar loss with targets, `loss is None` without targets, `AssertionError` on sequences exceeding `block_size`, and matching `generate` shapes with and without `top_k`.
+  2. `test_baseline_parameter_count`: Asserts the baseline model parameter count equals $V^2$, exactly 4,225 parameters for $V=65$.
+  3. `test_from_counts_analytic_probabilities`: Asserts `from_counts` with Laplace smoothing ($\alpha=1.0$) recovers exact hand-derived transition probability matrices (`torch.allclose` within $10^{-5}$) and that probability rows sum to 1.0.
+  4. `test_from_counts_loss_reduction`: Asserts that fitting `from_counts` on structured sequence data significantly reduces cross-entropy loss compared to an untrained random model (`fitted_loss < untrained_loss`) and achieves low cross-entropy ($< 1.0$).
 
 ### 6.2 Causality Falsification Proof
 To prove that our causality test is genuinely sensitive and not a vacuous check, we executed a scientific falsification experiment:
-- We temporarily patched the attention mask buffer `model.h[i].attn.bias` from its causal lower-triangular state to a matrix of all ones ($1.0$).
-- When future tokens were unmasked, modifying token $T$ caused past logits at tokens $1 \dots T-1$ to change immediately.
-- The assertion `torch.equal(logits1[:, :-1, :], logits2[:, :-1, :])` failed with `AssertionError: Tensor mismatch at token positions`.
+- We temporarily patched the attention mask buffer `model.h[*].attn.bias` from its causal lower-triangular state to a matrix of all ones ($1.0$).
+- When future tokens were unmasked, modifying the final token at position $T-1$ caused past logits at prefix tokens $0 \dots T-2$ to change immediately.
+- The assertion `assert diff_prefix == 0.0` failed with `AssertionError: Causality violated: earlier logits changed by 0.0091` (specifically `0.00910594`).
 - This definitively confirms the causal mask is active and strictly prevents bidirectional information leakage.
 
 ---
@@ -438,7 +438,7 @@ To maintain full transparency during project evaluation, the following boundarie
 **A**: The Bigram model serves as an analytical, non-deep-learning baseline representing the maximum predictive power achievable purely from first-order character transitions. It establishes an empirical baseline loss of 2.4958 nats on our validation split; comparing our Transformer models against this baseline proves whether our neural architectures are genuinely learning higher-order linguistic patterns.
 
 #### Q9: Why is Laplace smoothing with $\alpha = 1.0$ used in the bigram model instead of raw MLE frequencies?
-**A**: Raw maximum likelihood estimation assigns zero probability to any character bigram not observed in the training split, resulting in infinite cross-entropy loss and infinite perplexity on the validation set. Additive Laplace smoothing ($\alpha=1.0$) acts as a uniform prior that guarantees every valid transition has non-zero probability, yielding stable, optimal Bayes estimation.
+**A**: Raw maximum likelihood estimation assigns zero probability to any character bigram not observed in the training split, resulting in infinite cross-entropy loss and infinite perplexity on the validation set. Additive Laplace smoothing ($\alpha=1.0$) acts as a uniform prior that guarantees every valid transition has non-zero probability, yielding the posterior mean under a uniform Dirichlet prior.
 
 #### Q10: How did you verify that future tokens do not leak into earlier positions during attention?
-**A**: We wrote a unit test that verifies changing any token $j > i$ leaves the logits at position $i$ bitwise identical. Furthermore, we executed a falsification test by monkeypatching the triangular mask to all ones: the test immediately failed with an `AssertionError`, proving the mask strictly enforces causality.
+**A**: We wrote a unit test (`test_causality_masking`) that verifies changing any token $j > i$ leaves the logits at position $i$ bitwise identical (`diff_prefix == 0.0`). Furthermore, we executed a falsification test by monkeypatching the triangular mask to all ones: the test immediately failed with `AssertionError: Causality violated: earlier logits changed by 0.0091`, proving the mask strictly enforces causality.

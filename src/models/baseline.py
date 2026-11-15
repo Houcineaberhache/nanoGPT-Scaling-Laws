@@ -149,8 +149,8 @@ class BigramLanguageModel(nn.Module):
         Under a first-order Markov assumption, the optimal Maximum Likelihood Estimate (MLE)
         of transition probabilities is P_MLE(x_{t+1}=j | x_t=i) = C(i, j) / C(i).
         To avoid zero probabilities for unobserved bigrams (which yield infinite cross-entropy),
-        we place a symmetric Dirichlet prior Dir(alpha) over each row, yielding the Maximum A
-        Posteriori (MAP) predictive distribution (Laplace smoothing):
+        we place a symmetric Dirichlet prior Dir(alpha) over each row, yielding the
+        posterior mean under a uniform Dirichlet prior (Laplace smoothing):
             P_smooth(j | i) = (C(i, j) + alpha) / (sum_k C(i, k) + V * alpha)
 
         Since softmax(log P_smooth(i, :)) == P_smooth(i, :), directly loading the log-probabilities
