@@ -1,0 +1,10 @@
+# Medium model configuration for nanoGPT
+# Higher capacity model to investigate capacity scaling and generalization behavior.
+# vocab_size is dynamically injected at runtime from tokenizer metadata (meta.pkl).
+
+block_size: 256
+n_layer: 6
+n_head: 8
+n_embd: 256
+dropout: 0.2
+bias: false
