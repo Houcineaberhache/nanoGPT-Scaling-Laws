@@ -1,0 +1,10 @@
+# Small model configuration for nanoGPT
+# Designed for fast experimentation and training on smaller data slices (e.g. 25%, 50%).
+# vocab_size is dynamically injected at runtime from tokenizer metadata (meta.pkl).
+
+block_size: 256
+n_layer: 4
+n_head: 4
+n_embd: 128
+dropout: 0.2
+bias: false

@@ -35,16 +35,63 @@ class GPTConfig:
 
         Returns:
             Instantiated GPTConfig.
+
+        Raises:
+            ValueError: If YAML is not a dictionary, contains unknown keys, contains
+                        a conflicting vocab_size, or n_embd is not divisible by n_head.
+            KeyError: If any required key is missing from the YAML file.
         """
         with open(path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f)
+
+        if not isinstance(data, dict):
+            raise ValueError(f"YAML configuration at '{path}' must be a dictionary.")
+
+        # Check for unknown keys (catch accidental typos in YAML)
+        allowed_keys = {
+            "block_size",
+            "n_layer",
+            "n_head",
+            "n_embd",
+            "dropout",
+            "bias",
+            "vocab_size",
+        }
+        unknown_keys = sorted(list(set(data.keys()) - allowed_keys))
+        if unknown_keys:
+            raise ValueError(
+                f"YAML configuration at '{path}' contains unknown key(s): {unknown_keys}"
+            )
+
+        # Check for required keys
+        required_keys = ["block_size", "n_layer", "n_head", "n_embd"]
+        missing_keys = [k for k in required_keys if k not in data]
+        if missing_keys:
+            raise KeyError(
+                f"YAML configuration at '{path}' is missing required key(s): {missing_keys}"
+            )
+
+        # Check for conflicting vocab_size if present in YAML
+        if "vocab_size" in data and data["vocab_size"] is not None:
+            if data["vocab_size"] != vocab_size:
+                raise ValueError(
+                    f"YAML configuration contains vocab_size={data['vocab_size']}, "
+                    f"which contradicts injected vocab_size={vocab_size}."
+                )
+
+        n_embd = data["n_embd"]
+        n_head = data["n_head"]
+        if n_embd % n_head != 0:
+            raise ValueError(
+                f"n_embd ({n_embd}) must be divisible by n_head ({n_head})."
+            )
 
         return cls(
             vocab_size=vocab_size,
             block_size=data["block_size"],
             n_layer=data["n_layer"],
-            n_head=data["n_head"],
-            n_embd=data["n_embd"],
+            n_head=n_head,
+            n_embd=n_embd,
             dropout=data.get("dropout", 0.0),
             bias=data.get("bias", False),
         )
