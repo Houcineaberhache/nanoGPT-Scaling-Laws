@@ -27,9 +27,10 @@ out/
 wandb/
 
 # Generated results
-results/metrics/*
-results/figures/*
-results/generations/*
+results/*
+!results/metrics/
+!results/figures/
+!results/generations/
 !results/metrics/.gitkeep
 !results/figures/.gitkeep
 !results/generations/.gitkeep
