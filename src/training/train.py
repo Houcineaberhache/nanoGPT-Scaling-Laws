@@ -27,8 +27,8 @@ def set_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
         
-@torch.no_grad()
 
+@torch.no_grad()
 def estimate_loss(model, train_data, val_data, config, batch_size,
                   eval_iters, device):
     """Estimate average training and validation losses."""
@@ -57,6 +57,7 @@ def estimate_loss(model, train_data, val_data, config, batch_size,
 
     model.train()
     return results
+
 
 
 def train(
