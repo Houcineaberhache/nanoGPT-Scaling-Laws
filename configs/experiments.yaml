@@ -1,0 +1,51 @@
+
+# nanoGPT Scaling Laws - Experiment Configuration
+
+training:
+  max_iters: 5000
+  batch_size: 32
+  learning_rate: 0.0003
+  eval_interval: 250
+  eval_iters: 20
+  log_interval: 50
+  save_interval: 500
+  seed: 42
+  device: auto
+
+experiments:
+
+  E1:
+    description: "Small model - 25% training data"
+    config: configs/small.yaml
+    train: data/processed/train_25.bin
+    output: results/E1_small_25
+
+  E2:
+    description: "Small model - 50% training data"
+    config: configs/small.yaml
+    train: data/processed/train_50.bin
+    output: results/E2_small_50
+
+  E3:
+    description: "Small model - 100% training data"
+    config: configs/small.yaml
+    train: data/processed/train_100.bin
+    output: results/E3_small_100
+
+  E4:
+    description: "Medium model - 25% training data"
+    config: configs/medium.yaml
+    train: data/processed/train_25.bin
+    output: results/E4_medium_25
+
+  E5:
+    description: "Medium model - 50% training data"
+    config: configs/medium.yaml
+    train: data/processed/train_50.bin
+    output: results/E5_medium_50
+
+  E6:
+    description: "Medium model - 100% training data"
+    config: configs/medium.yaml
+    train: data/processed/train_100.bin
+    output: results/E6_medium_100
