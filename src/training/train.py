@@ -26,11 +26,17 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-        
 
 @torch.no_grad()
-def estimate_loss(model, train_data, val_data, config, batch_size,
-                  eval_iters, device):
+def estimate_loss(
+    model,
+    train_data,
+    val_data,
+    config,
+    batch_size,
+    eval_iters,
+    device,
+):
     """Estimate average training and validation losses."""
 
     model.eval()
@@ -57,7 +63,6 @@ def estimate_loss(model, train_data, val_data, config, batch_size,
 
     model.train()
     return results
-
 
 
 def train(
@@ -116,6 +121,7 @@ def train(
 
     start_iter = 0
     best_val_loss = float("inf")
+    latest_val_loss = float("nan")
 
     # 5. Resume training if a checkpoint is provided
     if resume:
@@ -127,13 +133,32 @@ def train(
         )
 
         start_iter = metadata["iter_num"]
+
         best_val_loss = (
             metadata["best_val_loss"]
             if metadata["best_val_loss"] is not None
             else float("inf")
         )
 
+        # Recalculate validation loss instead of trusting old metadata.
+        # This also handles checkpoints created before the metadata fix.
+        resume_losses = estimate_loss(
+            model,
+            train_data,
+            val_data,
+            config,
+            batch_size,
+            eval_iters,
+            device,
+        )
+
+        latest_val_loss = resume_losses["val"]
+
         print(f"Resuming from iteration {start_iter}")
+        print(
+            f"Validation loss at resume: "
+            f"{latest_val_loss:.4f}"
+        )
 
     # 6. Prepare metrics file
     metrics_path = os.path.join(output_dir, "metrics.csv")
@@ -201,6 +226,10 @@ def train(
 
                 train_loss = losses["train"]
                 val_loss = losses["val"]
+
+                # Keep the latest measured validation loss
+                latest_val_loss = val_loss
+
                 val_perplexity = math.exp(
                     min(val_loss, 20)
                 )
@@ -224,7 +253,7 @@ def train(
                     f"Val PPL: {val_perplexity:.2f}"
                 )
 
-                # Save best model
+                # Save best model based on validation loss
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
 
@@ -246,7 +275,7 @@ def train(
                     optimizer,
                     config,
                     completed_iter,
-                    loss.item(),
+                    latest_val_loss,
                     best_val_loss,
                 )
 
@@ -263,7 +292,7 @@ def train(
             optimizer,
             config,
             max_iters,
-            loss.item(),
+            latest_val_loss,
             best_val_loss,
         )
 
@@ -272,6 +301,7 @@ def train(
     print("\nTraining completed!")
     print(f"Total training time: {total_time:.2f} seconds")
     print(f"Best validation loss: {best_val_loss:.4f}")
+    print(f"Latest validation loss: {latest_val_loss:.4f}")
     print(f"Metrics saved to: {metrics_path}")
     print(f"Checkpoints saved to: {output_dir}")
 
@@ -281,7 +311,10 @@ if __name__ == "__main__":
         description="Train a character-level GPT model."
     )
 
-    parser.add_argument("--config", default="configs/small.yaml")
+    parser.add_argument(
+        "--config",
+        default="configs/small.yaml",
+    )
     parser.add_argument(
         "--train",
         default="data/processed/train_100.bin",
@@ -290,17 +323,58 @@ if __name__ == "__main__":
         "--val",
         default="data/processed/val.bin",
     )
-    parser.add_argument("--output", default="results/smoke_test")
-    parser.add_argument("--max_iters", type=int, default=100)
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--learning_rate", type=float, default=3e-4)
-    parser.add_argument("--eval_interval", type=int, default=50)
-    parser.add_argument("--eval_iters", type=int, default=10)
-    parser.add_argument("--log_interval", type=int, default=10)
-    parser.add_argument("--save_interval", type=int, default=100)
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", default="auto")
-    parser.add_argument("--resume", default=None)
+    parser.add_argument(
+        "--output",
+        default="results/smoke_test",
+    )
+    parser.add_argument(
+        "--max_iters",
+        type=int,
+        default=100,
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=16,
+    )
+    parser.add_argument(
+        "--learning_rate",
+        type=float,
+        default=3e-4,
+    )
+    parser.add_argument(
+        "--eval_interval",
+        type=int,
+        default=50,
+    )
+    parser.add_argument(
+        "--eval_iters",
+        type=int,
+        default=10,
+    )
+    parser.add_argument(
+        "--log_interval",
+        type=int,
+        default=10,
+    )
+    parser.add_argument(
+        "--save_interval",
+        type=int,
+        default=100,
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+    )
+    parser.add_argument(
+        "--device",
+        default="auto",
+    )
+    parser.add_argument(
+        "--resume",
+        default=None,
+    )
 
     args = parser.parse_args()
 
