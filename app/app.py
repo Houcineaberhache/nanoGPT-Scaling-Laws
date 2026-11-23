@@ -301,4 +301,4 @@ with gr.Blocks(title="Mini Shakespeare GPT", theme=gr.themes.Soft()) as demo:
 
 if __name__ == "__main__":
     # In Colab we need a temporary public link; elsewhere (local / Spaces) a normal launch.
-    demo.queue().launch(share="google.colab" in sys.modules)
+    demo.queue().launch(share="SPACE_ID" not in os.environ)
